@@ -77,7 +77,7 @@ class NoiseSimulator:
         self.accelerometer_bias_random_walk      = noise_params.accelerometer_bias_random_walk
         self.accelerometer_bias_correlation_time = noise_params.accelerometer_bias_correlation_time
 
-        # Init biases and time
+        # Init biases at 0
         self.gyroscope_bias = np.zeros(3)
         self.accelerometer_bias = np.zeros(3)
         self.prev_gyroscope_bias = np.zeros(3)

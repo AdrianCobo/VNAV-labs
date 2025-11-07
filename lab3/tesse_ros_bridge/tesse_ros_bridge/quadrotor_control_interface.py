@@ -47,7 +47,10 @@ from tesse.utils import *
 
 class TesseQuadrotorControlInterface(Node):
     def __init__(self):
-        """This class provides a ROS 2 interface for controlling TESSE quadrotor agents."""
+        """This class provides a ROS interface for controlling TESSE quadrotor agents.
+        ROS users can simply send propeller speeds command to predefined propeller speeds
+        topic, and this interface will transmit the appropriate messages to TESSE simulator.
+        """
         super().__init__('TesseQuadrotorControlInterface_node')
 
         # Networking parameters
