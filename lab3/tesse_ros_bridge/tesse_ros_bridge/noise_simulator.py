@@ -1,42 +1,43 @@
-#!/usr/bin/env python
+#!/usr/bin/env python3
 
 import copy
 import numpy as np
 
-import rospy2 as rospy
-import tf2_ros
+import rclpy 
+from rclpy.node import Node
+
 import tf_transformations
 
 class NoiseParams:
     """ Holds noise parameters for the noise simulator """
 
-    def _init_(self, noise_params):
+    def __init__(self, node: Node):
         """ Holds the noise params """
-    def __init__(self):
         # Noise parameters
-        self.position_noise_mu    = rospy.get_param("~position_noise_mu", 0.0)
-        self.position_noise_sigma = rospy.get_param("~position_noise_sigma", 0.0)
-        self.rotation_noise_mu    = rospy.get_param("~rotation_noise_mu", 0.0)
-        self.rotation_noise_sigma = rospy.get_param("~rotation_noise_sigma", 0.0)
-        self.linear_velocity_noise_mu    = rospy.get_param("~linear_velocity_noise_mu", 0.0)
-        self.linear_velocity_noise_sigma = rospy.get_param("~linear_velocity_noise_sigma", 0.0)
+        self.position_noise_mu    = node.declare_parameter("position_noise_mu", 0.0).value
+        self.position_noise_sigma = node.declare_parameter("position_noise_sigma", 0.0).value
+        self.rotation_noise_mu    = node.declare_parameter("rotation_noise_mu", 0.0).value
+        self.rotation_noise_sigma = node.declare_parameter("rotation_noise_sigma", 0.0).value
+        self.linear_velocity_noise_mu    = node.declare_parameter("linear_velocity_noise_mu", 0.0).value
+        self.linear_velocity_noise_sigma = node.declare_parameter("linear_velocity_noise_sigma", 0.0).value
 
-        self.gyroscope_noise_density_mu     = rospy.get_param("~gyroscope_noise_density_mu", 0.0)
-        self.gyroscope_noise_density        = rospy.get_param("~gyroscope_noise_density", 0.0)
-        self.accelerometer_noise_density_mu = rospy.get_param("~accelerometer_noise_density_mu", 0.0)
-        self.accelerometer_noise_density    = rospy.get_param("~accelerometer_noise_density", 0.0)
+        self.gyroscope_noise_density_mu     = node.declare_parameter("gyroscope_noise_density_mu", 0.0).value
+        self.gyroscope_noise_density        = node.declare_parameter("gyroscope_noise_density", 0.0).value
+        self.accelerometer_noise_density_mu = node.declare_parameter("accelerometer_noise_density_mu", 0.0).value
+        self.accelerometer_noise_density    = node.declare_parameter("accelerometer_noise_density", 0.0).value
 
         # Bias parameters
-        self.gyroscope_bias_correlation_time     = rospy.get_param("~gyroscope_bias_correlation_time", 0.0)
-        assert(self.gyroscope_bias_correlation_time > 0.0)
-        self.gyroscope_bias_random_walk_mu       = rospy.get_param("~gyroscope_bias_random_walk_mu", 0.0)
-        self.gyroscope_bias_random_walk          = rospy.get_param("~gyroscope_bias_random_walk", 0.0)
-        self.accelerometer_bias_correlation_time = rospy.get_param("~accelerometer_bias_correlation_time", 0.0)
-        assert(self.accelerometer_bias_correlation_time > 0.0)
-        self.accelerometer_bias_random_walk_mu   = rospy.get_param("~accelerometer_bias_random_walk_mu", 0.0)
-        self.accelerometer_bias_random_walk      = rospy.get_param("~accelerometer_bias_random_walk", 0.0)
+        self.gyroscope_bias_correlation_time     = node.declare_parameter("gyroscope_bias_correlation_time", 0.0).value
+        assert self.gyroscope_bias_correlation_time > 0.0
+        self.gyroscope_bias_random_walk_mu       = node.declare_parameter("gyroscope_bias_random_walk_mu", 0.0).value
+        self.gyroscope_bias_random_walk          = node.declare_parameter("gyroscope_bias_random_walk", 0.0).value
+        self.accelerometer_bias_correlation_time = node.declare_parameter("accelerometer_bias_correlation_time", 0.0).value
+        assert self.accelerometer_bias_correlation_time > 0.0
+        self.accelerometer_bias_random_walk_mu   = node.declare_parameter("accelerometer_bias_random_walk_mu", 0.0).value
+        self.accelerometer_bias_random_walk      = node.declare_parameter("accelerometer_bias_random_walk", 0.0).value
 
-class NoiseSimulator():
+
+class NoiseSimulator:
     """ A Noise Simulator
     It applies noise to the following elements in metadata:
         - position
@@ -45,7 +46,7 @@ class NoiseSimulator():
         - IMU: accelerometer and gyroscope
     """
 
-    def __init__(self, noise_params):
+    def __init__(self, noise_params: NoiseParams):
         """ Initializes the noise simulator by asking for the following params with [unit]:
             - rotation_noise_mu []
             - rotation_noise_sigma []
@@ -76,11 +77,11 @@ class NoiseSimulator():
         self.accelerometer_bias_random_walk      = noise_params.accelerometer_bias_random_walk
         self.accelerometer_bias_correlation_time = noise_params.accelerometer_bias_correlation_time
 
-        # Init biases at 0
-        self.gyroscope_bias = np.array([0., 0., 0.])
-        self.accelerometer_bias = np.array([0., 0., 0.])
-        self.prev_gyroscope_bias = np.array([0., 0., 0.])
-        self.prev_accelerometer_bias = np.array([0., 0., 0.])
+        # Init biases and time
+        self.gyroscope_bias = np.zeros(3)
+        self.accelerometer_bias = np.zeros(3)
+        self.prev_gyroscope_bias = np.zeros(3)
+        self.prev_accelerometer_bias = np.zeros(3)
 
         # Init time at 0
         self.prev_time = 0.0
@@ -105,16 +106,23 @@ class NoiseSimulator():
         metadata_noisy = copy.deepcopy(metadata)
 
         # Apply pose and linear velocity noise (odometry):
-        i_noise, j_noise, k_noise = np.random.normal([self.rotation_noise_mu]*3,
-                                                     [self.rotation_noise_sigma]*3)
+        i_noise, j_noise, k_noise = np.random.normal(
+            [self.rotation_noise_mu] * 3,
+            [self.rotation_noise_sigma] * 3
+        )
         metadata_noisy['quaternion'] = tf_transformations.quaternion_multiply(
             metadata_noisy['quaternion'],
             tf_transformations.quaternion_from_euler(i_noise, j_noise, k_noise)
         )
-        metadata_noisy['position']     += np.random.normal([self.position_noise_mu]*3,
-                                                           self.position_noise_sigma)
-        metadata_noisy['velocity']     += np.random.normal([self.linear_velocity_noise_mu]*3,
-                                                           self.linear_velocity_noise_sigma)
+
+        metadata_noisy['position'] += np.random.normal(
+            [self.position_noise_mu] * 3,
+            self.position_noise_sigma
+        )
+        metadata_noisy['velocity'] += np.random.normal(
+            [self.linear_velocity_noise_mu] * 3,
+            self.linear_velocity_noise_sigma
+        )
 
         # Add noise to IMU
         if self.prev_time > 0:
@@ -144,8 +152,9 @@ class NoiseSimulator():
         # Approximation assumes dt ~ 0 and results in: sigma_b_g_d = sigma_b_g_c * sqrt_dt
         sigma_b_g_d = sigma_b_g_c * np.sqrt(tau_g / 2.0 * (1.0 - np.exp(-2.0 * dt / tau_g)))
         # Gauss-Markov
-        self.gyroscope_bias = phi_g_d * self.gyroscope_bias + \
-                np.random.normal([self.gyroscope_bias_random_walk_mu]*3, sigma_b_g_d)
+        self.gyroscope_bias = phi_g_d * self.gyroscope_bias + np.random.normal(
+            [self.gyroscope_bias_random_walk_mu] * 3, sigma_b_g_d
+        )
 
         # Advance Acc bias
         sigma_b_a_c = self.accelerometer_bias_random_walk
@@ -155,21 +164,26 @@ class NoiseSimulator():
         # Exact covariance of the process: eq.14 in Luca's notes (check also Maybeck 4-114)
         # Approximation assumes dt ~ 0 and results in: sigma_b_a_d = sigma_b_a_c * sqrt_dt
         sigma_b_a_d = sigma_b_a_c * np.sqrt(tau_a / 2.0 * (1.0 - np.exp(-2.0 * dt / tau_a)))
-        self.accelerometer_bias = phi_a_d * self.accelerometer_bias + \
-                np.random.normal([self.accelerometer_bias_random_walk_mu]*3, sigma_b_a_d)
+        self.accelerometer_bias = phi_a_d * self.accelerometer_bias + np.random.normal(
+            [self.accelerometer_bias_random_walk_mu] * 3, sigma_b_a_d
+        )
 
         # Apply imu bias: see eq. 101 in Crassidis05 http://www.acsu.buffalo.edu/~johnc/gpsins_gnc05.pdf
         # Although that equation is meant for IMU modelled as a Wiener process,
         # while we model our IMU as a Gauss-Markov process here
-        metadata_noisy['ang_vel']      += (self.gyroscope_bias + self.prev_gyroscope_bias) / 2.0
+        metadata_noisy['ang_vel'] += (self.gyroscope_bias + self.prev_gyroscope_bias) / 2.0
         metadata_noisy['acceleration'] += (self.accelerometer_bias + self.accelerometer_bias) / 2.0
-        self.prev_gyroscope_bias       = self.gyroscope_bias
-        self.prev_accelerometer_bias   = self.accelerometer_bias
+        self.prev_gyroscope_bias = self.gyroscope_bias
+        self.prev_accelerometer_bias = self.accelerometer_bias
 
         # Apply white noise to imu, ensure dt is non-zero
-        assert(sqrt_dt != 0.0)
-        metadata_noisy['ang_vel']      += np.random.normal([self.gyroscope_noise_density_mu]*3,
-                                                           self.gyroscope_noise_density / sqrt_dt)
-        metadata_noisy['acceleration'] += np.random.normal([self.accelerometer_noise_density_mu]*3,
-                                                           self.accelerometer_noise_density / sqrt_dt)
+        assert sqrt_dt != 0.0
+        metadata_noisy['ang_vel'] += np.random.normal(
+            [self.gyroscope_noise_density_mu] * 3,
+            self.gyroscope_noise_density / sqrt_dt
+        )
+        metadata_noisy['acceleration'] += np.random.normal(
+            [self.accelerometer_noise_density_mu] * 3,
+            self.accelerometer_noise_density / sqrt_dt
+        )
         return metadata_noisy

@@ -15,10 +15,10 @@ tesse_ros_bridge:
 
     # IMU bias model
     ## The more correlation time, the closer to a Wiener process (instead of Gauss-Markov)
-    gyroscope_bias_correlation_time: 500 # [ s ]
+    gyroscope_bias_correlation_time: 500.0 # [ s ]
     gyroscope_bias_random_walk_mu: 0.0 # [ rad / s ]
     gyroscope_bias_random_walk: 0.000019393 # [ rad / s * Hz ]
-    accelerometer_bias_correlation_time: 500 # [ s ]
+    accelerometer_bias_correlation_time: 500.0 # [ s ]
     accelerometer_bias_random_walk_mu: 0.0 # [ m / s^2 ]
     accelerometer_bias_random_walk: 0.003 # [ m / s^2 * Hz]
 

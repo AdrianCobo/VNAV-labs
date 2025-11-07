@@ -1,15 +1,17 @@
-#!/usr/bin/env python
+#!/usr/bin/env python3
 
 import numpy as np
 import copy
 
-import rospy2 as rospy
-#import tf
+import rclpy
+from rclpy.node import Node
+from rclpy.qos import QoSProfile
+
+# import tf
 import tf2_ros
 from std_msgs.msg import Header, String
 from sensor_msgs.msg import Image as ImageMsg
-from sensor_msgs.msg import Imu, CameraInfo
-from sensor_msgs.msg import LaserScan
+from sensor_msgs.msg import Imu, CameraInfo, LaserScan
 from nav_msgs.msg import Odometry
 from geometry_msgs.msg import Pose, PoseStamped, Point, \
      PointStamped, TransformStamped, Quaternion, \
@@ -58,55 +60,62 @@ def mk_transform(trans, quat, timestamp, child_frame_id, frame_id):
 
     return t
 
-class TesseROSWrapper:
+class TesseROSWrapper(Node):
 
     def __init__(self):
+        super().__init__('tesse_ros_bridge')
+
+        qos10 = QoSProfile(depth=10)
+
         # Interface parameters
-        self.step_mode_enabled = rospy.get_param("~enable_step_mode", False)
+        self.step_mode_enabled = self.declare_parameter("enable_step_mode", False).value
 
         # Networking parameters
-        self.sim_ip        = rospy.get_param("~sim_ip", "127.0.0.1")
-        self.self_ip       = rospy.get_param("~self_ip", "127.0.0.1")
-        self.use_broadcast = rospy.get_param("~use_broadcast", False)
-        self.position_port = rospy.get_param("~position_port", 9000)
-        self.metadata_port = rospy.get_param("~metadata_port", 9001)
-        self.image_port    = rospy.get_param("~image_port", 9002)
-        self.udp_port      = rospy.get_param("~udp_port", 9004)
-        self.step_port     = rospy.get_param("~step_port", 9005)
-        self.scan_port     = rospy.get_param("~lidar_port", 9006)
-        self.scan_udp_port = rospy.get_param("~lidar_udp_port", 9007)
+        self.sim_ip        = self.declare_parameter("sim_ip", "127.0.0.1").value
+        self.self_ip       = self.declare_parameter("self_ip", "127.0.0.1").value
+        self.use_broadcast = self.declare_parameter("use_broadcast", False).value
+        self.position_port = self.declare_parameter("position_port", 9000).value
+        self.metadata_port = self.declare_parameter("metadata_port", 9001).value
+        self.image_port    = self.declare_parameter("image_port", 9002).value
+        self.udp_port      = self.declare_parameter("udp_port", 9004).value
+        self.step_port     = self.declare_parameter("step_port", 9005).value
+        self.scan_port     = self.declare_parameter("lidar_port", 9006).value
+        self.scan_udp_port = self.declare_parameter("lidar_udp_port", 9007).value
 
         # Set data to publish
-        self.publish_clock             = rospy.get_param("~publish_clock", False)
-        self.publish_metadata          = rospy.get_param("~publish_metadata", False)
-        self.publish_collisions        = rospy.get_param("~publish_collisions", False)
-        self.publish_imu               = rospy.get_param("~publish_imu", False)
-        self.publish_odom              = rospy.get_param("~publish_odom", False)
-        self.publish_noisy_imu         = rospy.get_param("~publish_noisy_imu", False)
-        self.publish_imu_noise_biases  = rospy.get_param("~publish_imu_noise_biases", False)
-        self.publish_noisy_odom        = rospy.get_param("~publish_noisy_odom", False)
-        self.publish_stereo_rgb        = rospy.get_param("~publish_stereo_rgb", False)
-        self.publish_stereo_gry        = rospy.get_param("~publish_stereo_gry", False)
-        self.publish_segmentation      = rospy.get_param("~publish_segmentation", False)
-        self.publish_depth             = rospy.get_param("~publish_depth", False)
-        self.publish_third_pov         = rospy.get_param("~publish_third_pov", False)
-        self.publish_front_lidar       = rospy.get_param("~publish_front_lidar", False)
-        self.publish_rear_lidar        = rospy.get_param("~publish_rear_lidar", False)
+        self.publish_clock             = self.declare_parameter("publish_clock", False).value
+        self.publish_metadata          = self.declare_parameter("publish_metadata", False).value
+        self.publish_collisions        = self.declare_parameter("publish_collisions", False).value
+        self.publish_imu               = self.declare_parameter("publish_imu", False).value
+        self.publish_odom              = self.declare_parameter("publish_odom", False).value
+        self.publish_noisy_imu         = self.declare_parameter("publish_noisy_imu", False).value
+        self.publish_imu_noise_biases  = self.declare_parameter("publish_imu_noise_biases", False).value
+        self.publish_noisy_odom        = self.declare_parameter("publish_noisy_odom", False).value
+        self.publish_stereo_rgb        = self.declare_parameter("publish_stereo_rgb", False).value
+        self.publish_stereo_gry        = self.declare_parameter("publish_stereo_gry", False).value
+        self.publish_segmentation      = self.declare_parameter("publish_segmentation", False).value
+        self.publish_depth             = self.declare_parameter("publish_depth", False).value
+        self.publish_third_pov         = self.declare_parameter("publish_third_pov", False).value
+        self.publish_front_lidar       = self.declare_parameter("publish_front_lidar", False).value
+        self.publish_rear_lidar        = self.declare_parameter("publish_rear_lidar", False).value
 
         # Simulator speed parameters
-        self.frame_rate     = rospy.get_param("~frame_rate", 20.0)
-        self.imu_rate       = rospy.get_param("~imu_rate", 200.0)
-        self.scan_rate      = rospy.get_param("~scan_rate", 200.0)
+        self.frame_rate     = self.declare_parameter("frame_rate", 20.0).value
+        self.imu_rate       = self.declare_parameter("imu_rate", 200.0).value
+        self.scan_rate      = self.declare_parameter("scan_rate", 200.0).value
 
         # Output parameters
-        self.use_gt_frames        = rospy.get_param("~use_gt_frames", False)
-        self.world_frame_id       = rospy.get_param("~world_frame_id", "world")
-        self.body_frame_id        = rospy.get_param("~body_frame_id", "base_link")
-        self.body_frame_id_gt     = rospy.get_param("~body_frame_id_gt", "base_link_gt")
-        self.map_frame_id         = rospy.get_param("~map_frame_id", "map")
-        
+        self.use_gt_frames        = self.declare_parameter("use_gt_frames", False).value
+        self.world_frame_id       = self.declare_parameter("world_frame_id", "world").value
+        self.body_frame_id        = self.declare_parameter("body_frame_id", "base_link").value
+        self.body_frame_id_gt     = self.declare_parameter("body_frame_id_gt", "base_link_gt").value
+        self.map_frame_id         = self.declare_parameter("map_frame_id", "map").value
+
         # Init noisification parameters
-        self.noise_params = NoiseParams()
+        try:
+            self.noise_params = NoiseParams(self)
+        except TypeError:
+            self.noise_params = NoiseParams()
 
         # Init noise simulator
         self.noise_simulator = NoiseSimulator(self.noise_params)
@@ -137,17 +146,17 @@ class TesseROSWrapper:
             self.env.send(SetFrameRate(self.frame_rate))
 
         # Setup collision
-        enable_collision = rospy.get_param("~enable_collision", True)
+        enable_collision = self.declare_parameter("enable_collision", True).value
         if not enable_collision:
             self.setup_collision(enable_collision)
 
         # Change scene
-        initial_scene = rospy.get_param("~initial_scene", 1)
+        initial_scene = self.declare_parameter("initial_scene", 1).value
         ####################################
         # Disabled while migrating to ROS2 #
         ####################################
-        #rospy.wait_for_service('scene_change_request')
-        #self.change_scene(initial_scene)
+        # rospy.wait_for_service('scene_change_request')
+        # self.change_scene(initial_scene)
 
         # TODO(marcus): this is not nice! Need a return from the sim!
         # Suddenly the problem went away. Keeping for when it comes back...
@@ -158,14 +167,15 @@ class TesseROSWrapper:
         self.cv_bridge = CvBridge()
 
         # Transform broadcasters
-        self.tf_broadcaster = tf2_ros.TransformBroadcaster(rospy._node)
+        self.tf_broadcaster = tf2_ros.TransformBroadcaster(self)
 
         self.tf_buffer = Buffer()
-        self.tf_listener = tf2_ros.TransformListener(self.tf_buffer, rospy._node)
+        self.tf_listener = tf2_ros.TransformListener(self.tf_buffer, self)
+
         # Don't call static_tf_broadcaster.sendTransform multiple times.
         # Rather call it once with multiple static tfs! Check issue #40
         self.static_tfs_to_broadcast = []
-        self.static_tf_broadcaster = tf2_ros.StaticTransformBroadcaster()
+        self.static_tf_broadcaster = tf2_ros.StaticTransformBroadcaster(self)
 
         # Setup all sensor data publishers and sensor objects for interfacing
         self.cameras = []
@@ -185,11 +195,12 @@ class TesseROSWrapper:
         # self.setup_static_map_tf()
 
         # Publish all sensor static TFs
-        self.static_tf_broadcaster.sendTransform(self.static_tfs_to_broadcast)
+        if self.static_tfs_to_broadcast:
+            self.static_tf_broadcaster.sendTransform(self.static_tfs_to_broadcast)
 
         # Setup metadata publisher
         if self.publish_metadata:
-            self.metadata_pub = rospy.Publisher("metadata", String, queue_size=10)
+            self.metadata_pub = self.create_publisher(String, "metadata", qos_profile=qos10)
 
         # Setup lidar UdpListener
         # TODO(marcus): see if this can be done as a UDP high-rate broadacst
@@ -206,21 +217,21 @@ class TesseROSWrapper:
 
         # Setup ROS publishers for metadata
         if self.publish_imu:
-            self.clean_imu_pub = rospy.Publisher("imu/clean/imu", Imu, queue_size=10)
+            self.clean_imu_pub = self.create_publisher(Imu, "imu/clean/imu", qos_profile=qos10)
 
         if self.publish_odom:
-            self.odom_pub = rospy.Publisher("odom", Odometry, queue_size=10)
+            self.odom_pub = self.create_publisher(Odometry, "odom", qos_profile=qos10)
 
         if self.publish_noisy_imu:
-            self.noisy_imu_pub      = rospy.Publisher("imu/noisy/imu", Imu, queue_size=10)
-            self.imu_gyro_bias_pub  = rospy.Publisher("imu/noisy/biases/gyro", Vector3Stamped, queue_size=10)
-            self.imu_accel_bias_pub = rospy.Publisher("imu/noisy/biases/accel", Vector3Stamped, queue_size=10)
+            self.noisy_imu_pub      = self.create_publisher(Imu, "imu/noisy/imu", qos_profile=qos10)
+            self.imu_gyro_bias_pub  = self.create_publisher(Vector3Stamped, "imu/noisy/biases/gyro", qos_profile=qos10)
+            self.imu_accel_bias_pub = self.create_publisher(Vector3Stamped, "imu/noisy/biases/accel", qos_profile=qos10)
 
         if self.publish_noisy_odom:
-            self.noisy_odom_pub = rospy.Publisher("odom/noisy", Odometry, queue_size=10)
+            self.noisy_odom_pub = self.create_publisher(Odometry, "odom/noisy", qos_profile=qos10)
 
         if self.publish_collisions:
-            self.coll_pub = rospy.Publisher("collision", CollisionStats, queue_size=10)
+            self.coll_pub = self.create_publisher(CollisionStats, "collision", qos_profile=qos10)
 
         # Required states for finite difference calculations
         self.prev_time      = 0.0
@@ -241,10 +252,11 @@ class TesseROSWrapper:
 
         # Simulated time requires that we constantly publish to '/clock'.
         if self.publish_clock:
-            self.clock_pub = rospy.Publisher("/clock", Clock, queue_size=10)
+            from rosgraph_msgs.msg import Clock as RosClock
+            self.clock_pub = self.create_publisher(RosClock, "/clock", qos_profile=qos10)
 
         # Setup initial-pose subscriber
-        rospy.Subscriber("/initialpose", PoseWithCovarianceStamped, self.reposition_cb)
+        self.create_subscription(PoseWithCovarianceStamped, "/initialpose", self.reposition_cb, 10)
 
         # Reposition agent if needed
         # time.sleep(2)  # TODO(marcus): only necessary for play_traj! not sure why?
@@ -266,39 +278,33 @@ class TesseROSWrapper:
         """
 
         # Setup driving commands
-        ackermann_drive = rospy.get_param("~drive_with_ackermann", False)
+        ackermann_drive = self.declare_parameter("drive_with_ackermann", False).value
 
         if ackermann_drive:
-            rospy.Subscriber("drive", AckermannDriveStamped, self.cmd_cb_ackermann)
+            self.create_subscription(AckermannDriveStamped, "drive", self.cmd_cb_ackermann, 10)
         else:
-            rospy.Subscriber("drive", Twist, self.cmd_cb_twist)
+            self.create_subscription(Twist, "drive", self.cmd_cb_twist, 10)
 
-        print("TESSE_ROS_NODE: Initialization complete.", )
+        self.get_logger().info("TESSE_ROS_NODE: Initialization complete.")
 
     def spin(self):
         """ Start timers and callbacks.
-
             Because we are publishing sim time, we
-            cannot simply call `rospy.spin()` as this will wait for messages
+            cannot simply call `rclpy.spin()` as this will wait for messages
             to go to /clock first, and will freeze the node.
         """
         self.meta_listener.start()
 
-        if rospy.get_param("~num_objects") > 0:
-            rospy.Timer(rospy.Duration(1.0 / self.frame_rate), self.object_cb)
+        if self.get_parameter("num_objects").value > 0:
+            self.create_timer(1.0 / self.frame_rate, self.object_cb)
 
         if len(self.cameras) > 0:
-            rospy.Timer(rospy.Duration(1.0 / self.frame_rate), self.image_cb)
+            self.create_timer(1.0 / self.frame_rate, self.image_cb)
 
         if len(self.lidars) > 0:
-            rospy.Timer(rospy.Duration(1.0 / self.scan_rate), self.scan_cb_slow)
+            self.create_timer(1.0 / self.scan_rate, self.scan_cb_slow)
 
-        # self.scan_listener.start()
-
-        while not rospy.is_shutdown():
-            self.clock_cb(None)
-        else:
-            rospy.spin()
+        self.create_timer(1.0 / self.frame_rate, self.clock_cb)
 
     def clock_cb(self, event):
         """ Publishes simulated clock time as well as collision statistics.
@@ -308,8 +314,7 @@ class TesseROSWrapper:
             here because the metadata broadcast does not check for collisions.
 
             Args:
-                event: A rospy.Timer event object, which is not used in this
-                    method. You may supply `None`.
+                event: a dummy parameter (kept for compatibility)
         """
         if self.step_mode_enabled:
             if len(self.last_step_cmd) > 0:
@@ -318,16 +323,15 @@ class TesseROSWrapper:
                                             torque_y=cur_cmd[2],
                                             force_x=cur_cmd[1]))
             else:
-                print("TESSE_ROS_NODE: No commands to publish...", )
+                self.get_logger().info("TESSE_ROS_NODE: No commands to publish...")
 
         if self.publish_clock or self.publish_collisions:
             try:
                 sim_data = self.env.request(MetadataRequest()).metadata
                 metadata = tesse_ros_bridge.utils.parse_metadata(sim_data)
 
-                #rospy.loginfo(str(metadata))
                 if self.publish_clock:
-                    curr_ros_time = from_sec_float(metadata['time']) # TODO rospy2.Time.from_sec() error fix this
+                    curr_ros_time = from_sec_float(metadata['time'])
                     c = Clock()
                     c.clock = curr_ros_time
                     self.clock_pub.publish(c)
@@ -342,7 +346,7 @@ class TesseROSWrapper:
                     self.coll_pub.publish(coll_msg)
 
             except Exception as error:
-                print("TESSE_ROS_NODE: clock_cb error: ", error)
+                self.get_logger().error(f"TESSE_ROS_NODE: clock_cb error: {error}")
 
     def cmd_cb_ackermann(self, msg):
         """ Listens to published drive commands and sends to simulator.
@@ -403,7 +407,6 @@ class TesseROSWrapper:
                                    torque_y=torque_z,
                                    force_x=force_y))
 
-
     def reposition_cb(self, msg):
         """ Listens to pose requests and sends the reposition command
             to the simulator.
@@ -419,8 +422,12 @@ class TesseROSWrapper:
             pst = PoseStamped()
             pst.pose = msg.pose.pose
             pst.header = msg.header
-            pose = self.tf_listener.transformPose(
-                self.world_frame_id, pst).pose
+            try:
+                transformed = self.tf_buffer.transform(pst, self.world_frame_id, timeout_sec=0.1)
+                pose = transformed.pose
+            except Exception:
+                # If transform fails, keep original pose
+                self.get_logger().warning("Transform for reposition failed; using incoming pose")
 
         # Hacky frame change from ROS to Unity (left handed)
         # TODO(marcus): We really want to convert to numpy 4x4 and compose!
@@ -457,7 +464,7 @@ class TesseROSWrapper:
         """
         # Publish raw metadata.
         if self.publish_metadata:
-                self.metadata_pub.publish(data)
+                self.metadata_pub.publish(msg)
 
         # Parse metadata and process for proper use.
         metadata = tesse_ros_bridge.utils.parse_metadata(data)
@@ -522,7 +529,7 @@ class TesseROSWrapper:
         self.prev_vel_brh   = metadata_processed['velocity']
         self.prev_enu_R_brh = metadata_processed['transform'][:3,:3]
 
-    def image_cb(self, event):
+    def image_cb(self, event=None):
         """ Publish images from simulator to ROS.
 
             Left and right images are published in the requested encoding.
@@ -531,8 +538,7 @@ class TesseROSWrapper:
             Segmentation images are published in the rgb8 encoding.
 
             Args:
-                event: A rospy.Timer event object, which is not used in this
-                    method. You may supply `None`.
+                event: a dummy parameter (kept for compatibility)
         """
         try:
             # Get camera data.
@@ -545,7 +551,7 @@ class TesseROSWrapper:
             timestamp = from_sec_float(metadata['time'])
 
             if timestamp == self.last_image_timestamp:
-                rospy.loginfo("Skipping duplicate images at timestamp %s" % self.last_image_timestamp)
+                self.get_logger().info(f"Skipping duplicate images at timestamp {self.last_image_timestamp}")
                 return
 
             # Process each image.
@@ -584,9 +590,9 @@ class TesseROSWrapper:
             self.last_image_timestamp = timestamp
 
         except Exception as error:
-            print("TESSE_ROS_NODE: image_cb error: ", error)
+            self.get_logger().error(f"TESSE_ROS_NODE: image_cb error: {error}")
 
-    def object_cb(self,event):
+    def object_cb(self,event=None):
         """
         """
         obj_metadata = self.env.request(ObjectsRequest()).metadata
@@ -604,19 +610,18 @@ class TesseROSWrapper:
                                               frame_id,
                                               self.world_frame_id))
 
-    def scan_cb_slow(self, event):
+    def scan_cb_slow(self, event=None):
         """ Received LiDAR data from the simulator using standard udp requests
             and waiting for tcp replies. Publishes to ROS.
 
             Args:
-                event: A rospy.Timer event object, which is not used in this
-                    method. You may supply `None`.
+                event: a dummy parameter (kept for compatibility)
         """
         try:
             data_response = self.env.request(LidarDataRequest(True, [lidar[0] for lidar in self.lidars]))
             self.scan_cb(data_response)
         except Exception as error:
-            print("TESSE_ROS_NODE: scan_cb_slow error: ", error)
+            self.get_logger().error(f"TESSE_ROS_NODE: scan_cb_slow error: {error}")
 
     def scan_cb(self, data):
         """ Receives LiDAR data from the simulator and publishes to ROS.
@@ -714,8 +719,7 @@ class TesseROSWrapper:
             # Set parameters
             resp = None
             while resp is None:
-                print("TESSE_ROS_NODE: Setting intrinsic parameters for camera: ",
-                        camera_id)
+                self.get_logger().info("TESSE_ROS_NODE: Setting intrinsic parameters for camera: %s" % camera_id)
                 resp = self.env.request(SetCameraParametersRequest(
                     camera_id,
                     height,
@@ -727,8 +731,7 @@ class TesseROSWrapper:
             # Set position
             resp = None
             while resp is None:
-                print("TESSE_ROS_NODE: Setting position of camera: ",
-                        camera_id)
+                self.get_logger().info("TESSE_ROS_NODE: Setting position of camera: %s" % camera_id)
                 resp = self.env.request(SetCameraPositionRequest(
                         camera_id,
                         pos_x,
@@ -737,8 +740,7 @@ class TesseROSWrapper:
 
             # Set orientation
             while resp is None:
-                print("TESSE_ROS_NODE: Setting orientation of camera: ",
-                        camera_id)
+                self.get_logger().info("TESSE_ROS_NODE: Setting orientation of camera: %s" % camera_id)
                 resp = self.env.request(SetCameraOrientationRequest(
                         camera_id,
                         quat_x,
@@ -749,8 +751,7 @@ class TesseROSWrapper:
             # Get information back from simulator
             cam_data = None
             while cam_data is None:
-                print("TESSE_ROS_NODE: Acquiring camera data for camera: ",
-                        camera_id)
+                self.get_logger().info("TESSE_ROS_NODE: Acquiring camera data for camera: %s" % camera_id)
                 cam_data = tesse_ros_bridge.utils.parse_cam_data(
                     self.env.request(
                         CameraInformationRequest(camera_id)).metadata)
@@ -766,7 +767,7 @@ class TesseROSWrapper:
             if self.use_gt_frames:
                 static_tf_cam.header.frame_id   = self.body_frame_id_gt
             static_tf_cam.child_frame_id        = camera[3]
-            static_tf_cam.header.stamp          = rospy.Time.now()
+            static_tf_cam.header.stamp          = self.get_clock().now().to_msg()
             static_tf_cam.transform.translation = Point(cam_data['position'][0],
                                                         cam_data['position'][1],
                                                         cam_data['position'][2])
@@ -782,9 +783,7 @@ class TesseROSWrapper:
                     cam_data, camera[3])
 
             # Initialize the publisher for the camera info
-            cam_info_pub = rospy.Publisher(camera_params['camera_id'] + "/camera_info",
-                                            CameraInfo,
-                                            queue_size=10)
+            cam_info_pub = self.create_publisher(CameraInfo, camera_params['camera_id'] + "/camera_info", qos_profile=qos10)
 
             self.cam_info_msgs.append(cam_info_msg)
             self.cam_info_pubs.append(cam_info_pub)
@@ -797,19 +796,13 @@ class TesseROSWrapper:
 
         # Initialize the publisher for the image
         if n_channel_switcher[camera_params['num_channels']] == Channels.THREE:
-            self.img_pubs.append(rospy.Publisher(camera_params['camera_id'] + "/rgb/image_raw",
-                                                ImageMsg,
-                                                queue_size=10))
+            self.img_pubs.append(self.create_publisher(ImageMsg, camera_params['camera_id'] + "/rgb/image_raw", qos_profile=qos10))
         elif n_channel_switcher[camera_params['num_channels']] == Channels.SINGLE:
-            self.img_pubs.append(rospy.Publisher(camera_params['camera_id'] + "/mono/image_raw",
-                                                ImageMsg,
-                                                queue_size=10))
+            self.img_pubs.append(self.create_publisher(ImageMsg, camera_params['camera_id'] + "/mono/image_raw", qos_profile=qos10))
 
     def setup_all_cameras(self):
-        """ Sets up all cameras based on the publish flags passed from
-            launch.
-        """
-        camera_params = rospy.get_param("~camera_params",'NOT SET')
+        """ Sets up all cameras based on the publish flags passed from launch. """
+        camera_params = self.declare_parameter("camera_params", 'NOT SET').value
         if camera_params == 'NOT SET':
             camera_params = {}
 
@@ -848,7 +841,7 @@ class TesseROSWrapper:
         lidar = (lidar_id, lidar_params['frame_id'])
         self.lidars.append(lidar)
 
-        # Get all lidar parameters from rosparam server
+        # Get all lidar parameters
         min_angle = lidar_params["scan_min_angle"]
         max_angle = lidar_params["scan_max_angle"]
         max_range = lidar_params["scan_max_range"]
@@ -866,7 +859,7 @@ class TesseROSWrapper:
         # Set parameters
         resp = None
         while resp is None:
-            print("TESSE_ROS_NODE: Setting intrinsic parameters for lidar: ", lidar_id)
+            self.get_logger().info("TESSE_ROS_NODE: Setting intrinsic parameters for lidar: %s" % lidar_id)
             resp = self.env.request(SetLidarParametersRequest(
                 lidar_id,
                 min_angle=min_angle,
@@ -878,7 +871,7 @@ class TesseROSWrapper:
         if pos_x != "default" or pos_y != "default" or pos_z != "default":
             resp = None
             while resp is None:
-                print("TESSE_ROS_NODE: Setting position of lidar: ", lidar_id)
+                self.get_logger().info("TESSE_ROS_NODE: Setting position of lidar: %s" % lidar_id)
                 resp = self.env.request(SetLidarPositionRequest(
                         lidar_id,
                         pos_x,
@@ -890,7 +883,7 @@ class TesseROSWrapper:
                 quat_z != "default" or quat_w != "default":
             resp = None
             while resp is None:
-                print("TESSE_ROS_NODE: Setting orientation of lidar: ", lidar_id)
+                self.get_logger().info("TESSE_ROS_NODE: Setting orientation of lidar: %s" % lidar_id)
                 resp = self.env.request(SetLidarOrientationRequest(
                         lidar_id,
                         quat_x,
@@ -901,8 +894,7 @@ class TesseROSWrapper:
         # Get information back from simulator
         lidar_data = None
         while lidar_data is None:
-            print("TESSE_ROS_NODE: Acquiring lidar data for lidar: ",
-                    lidar_id)
+            self.get_logger().info("TESSE_ROS_NODE: Acquiring lidar data for lidar: %s" % lidar_id)
             lidar_data = tesse_ros_bridge.utils.parse_lidar_data(
                 self.env.request(LidarInformationRequest(lidar_id)).metadata)
 
@@ -915,7 +907,7 @@ class TesseROSWrapper:
 
         # Publish static transform for lidar
         scan_ts                       = TransformStamped()
-        scan_ts.header.stamp          = rospy.Time.now()
+        scan_ts.header.stamp          = self.get_clock().now().to_msg()
         scan_ts.header.frame_id       = self.body_frame_id
         if self.use_gt_frames:
             scan_ts.header.frame_id   = self.body_frame_id_gt
@@ -933,13 +925,13 @@ class TesseROSWrapper:
         self.lidar_params.append(lidar_data)
 
         # Set up scan publisher
-        self.scan_pubs.append(rospy.Publisher(lidar[1] + "/scan", LaserScan, queue_size=10))
+        self.scan_pubs.append(self.create_publisher(LaserScan, lidar[1] + "/scan", qos_profile=qos10))
 
     def setup_all_lidars(self):
         """ Sets up all LiDARs in the simulator based on the publish flags
             passed in from launch.
         """
-        lidar_params = rospy.get_param("~lidar_params",'NOT SET')
+        lidar_params = self.declare_parameter("lidar_params", 'NOT SET').value
         if lidar_params == 'NOT SET':
             lidar_params = {}
         # Get all lidars to be used
@@ -948,7 +940,7 @@ class TesseROSWrapper:
 
         if self.publish_rear_lidar:
             self.setup_lidar(lidar_params['REAR'])
-
+    
     # TODO(marcus): is this useful for general purpose?
     # def setup_static_map_tf(self):
     #     """
@@ -979,14 +971,14 @@ class TesseROSWrapper:
 
     def spawn_initial_objects(self):
         """ Spawn initial objects from the parameter yaml file. """
-        print("TESSE_ROS_NODE: Spawning initial objects", )
-        num_objects = rospy.get_param("~num_objects")
+        self.get_logger().info("TESSE_ROS_NODE: Spawning initial objects")
+        num_objects = int(self.declare_parameter("num_objects", 0).value)
 
         for i in range(num_objects):
-            obj_dict = rospy.get_param("~object_" + str(i))
+            obj_dict = self.declare_parameter(f"object_{i}", {}).value
             pose = Pose()
             params = []
-            if obj_dict['use_custom_pose']:
+            if obj_dict.get('use_custom_pose', False):
                 pose.position.x = obj_dict['px']
                 pose.position.y = obj_dict['py']
                 pose.position.z = obj_dict['pz']
@@ -994,20 +986,20 @@ class TesseROSWrapper:
                 pose.orientation.y = obj_dict['qy']
                 pose.orientation.z = obj_dict['qz']
                 pose.orientation.w = obj_dict['qw']
-            if obj_dict['send_params']:
+            if obj_dict.get('send_params', False):
                 if 'params' in obj_dict.keys():
                     for param in obj_dict['params']:
                         params.append(param)
                 else:
                     # Choose random parameters.
                     # TODO(marcus): this is specific to SMPL! Generalize the number of params.
-                    params = [(np.random.random() * 2) - 1 for i in range(10)]
+                    params = [(np.random.random() * 2) - 1 for _ in range(10)]
 
             self.spawn_object(obj_dict['id'], pose, params)
 
     def setup_collision(self, enable_collision):
         """ Enable/Disable collisions in Simulator. """
-        print("TESSE_ROS_NODE: Setup collisions to:", enable_collision)
+        self.get_logger().info(f"TESSE_ROS_NODE: Setup collisions to: {enable_collision}")
         if enable_collision is True:
             self.env.send(ColliderRequest(enable=1))
         else:
@@ -1021,74 +1013,61 @@ class TesseROSWrapper:
                 object_spawn_request: spawn a prefab object into the scene
                 reposition_request:   reposition the agent to a desired pose
         """
-        self.scene_request_service = rospy.Service("scene_change_request",
-                                                    SceneRequestService,
-                                                    self.rosservice_change_scene)
-        self.change_scene = rospy.ServiceProxy('scene_change_request',
-                                               SceneRequestService)
+        self.scene_request_service = self.create_service(SceneRequestService, "scene_change_request", self.rosservice_change_scene)
+        self.change_scene_client = self.create_client(SceneRequestService, 'scene_change_request')
 
-        self.object_spawn_service = rospy.Service("object_spawn_request",
-                                                  ObjectSpawnRequestService,
-                                                  self.rosservice_spawn_object)
-        self.spawn_object = rospy.ServiceProxy('object_spawn_request',
-                                               ObjectSpawnRequestService)
+        self.object_spawn_service = self.create_service(ObjectSpawnRequestService, "object_spawn_request", self.rosservice_spawn_object)
+        self.spawn_object_client = self.create_client(ObjectSpawnRequestService, 'object_spawn_request')
 
-        self.reposition_request_service = rospy.Service('reposition_request',
-                                                        RepositionRequestService,
-                                                        self.rosservice_reposition)
-        self.reposition_agent = rospy.ServiceProxy('reposition_request',
-                                                   RepositionRequestService)
+        self.reposition_request_service = self.create_service(RepositionRequestService, 'reposition_request', self.rosservice_reposition)
+        self.reposition_agent_client = self.create_client(RepositionRequestService, 'reposition_request')
 
-    def rosservice_change_scene(self, req):
+    def rosservice_change_scene(self, request, response):
         """ Change scene ID of simulator as a ROS service. """
         try:
-            self.env.request(SceneRequest(req.id))
-            return True
+            self.env.request(SceneRequest(request.id))
+            return response
         except Exception as e:
-            print("Scene Change Error: ", e)
+            self.get_logger().error(f"Scene Change Error: {e}")
+            return response
 
-        return False
-
-    def rosservice_spawn_object(self, req):
+    def rosservice_spawn_object(self, request, response):
         """ Spawn an object into the simulator as a ROS service. """
-
         try:
-            if req.pose == Pose():
-                self.env.request(SpawnObjectRequest(object_index=req.id,
+            if request.pose == Pose():
+                self.env.request(SpawnObjectRequest(object_index=request.id,
                                                     method=ObjectSpawnMethod.RANDOM,
-                                                    params=req.params))
+                                                    params=request.params))
             else:
-                self.env.request(SpawnObjectRequest(object_index=req.id,
+                self.env.request(SpawnObjectRequest(object_index=request.id,
                                                     method=ObjectSpawnMethod.USER,
-                                                    position_x=req.pose.position.x,
-                                                    position_y=req.pose.position.y,
-                                                    position_z=req.pose.position.z,
-                                                    orientation_x=req.pose.orientation.x,
-                                                    orientation_y=req.pose.orientation.y,
-                                                    orientation_z=req.pose.orientation.z,
-                                                    orientation_w=req.pose.orientation.w,
-                                                    params=req.params))
-            return True
+                                                    position_x=request.pose.position.x,
+                                                    position_y=request.pose.position.y,
+                                                    position_z=request.pose.position.z,
+                                                    orientation_x=request.pose.orientation.x,
+                                                    orientation_y=request.pose.orientation.y,
+                                                    orientation_z=request.pose.orientation.z,
+                                                    orientation_w=request.pose.orientation.w,
+                                                    params=request.params))
+            return response
         except Exception as e:
-            print("Object Spawn Error: ", e)
+            self.get_logger().error(f"Object Spawn Error: {e}")
+            return response
 
-        return False
-
-    def rosservice_reposition(self, req):
+    def rosservice_reposition(self, request, response):
         """ Repositions the agent to a desired pose as a ROS service. """
         try:
-            self.env.send(Reposition(req.pose.position.x,
-                          req.pose.position.y,
-                          req.pose.position.z,
-                          req.pose.orientation.x,
-                          req.pose.orientation.y,
-                          req.pose.orientation.z,
-                          req.pose.orientation.w))
-            return True
+            self.env.send(Reposition(request.pose.position.x,
+                          request.pose.position.y,
+                          request.pose.position.z,
+                          request.pose.orientation.x,
+                          request.pose.orientation.y,
+                          request.pose.orientation.z,
+                          request.pose.orientation.w))
+            return response
         except Exception as e:
-            print("Reposition Error: ", e)
-
-        return False
+            self.get_logger().error(f"Reposition Error: {e}")
+            return response
 
     def publish_tf(self, cur_tf, timestamp):
         """ Publish the ground-truth transform to the TF tree.
@@ -1107,10 +1086,19 @@ class TesseROSWrapper:
                                           self.body_frame_id_gt,
                                           self.world_frame_id))
 
-def main():
-    rospy.init_node("tesse_ros_bridge")
+
+def main(args=None):
+    rclpy.init(args=args)
     node = TesseROSWrapper()
-    node.spin()
+    node.spin() # create timers
+    try:
+        rclpy.spin(node)  # control timers y callbacks
+    except KeyboardInterrupt:
+        pass
+    finally:
+        node.destroy_node()
+        rclpy.shutdown()
+
 
 if __name__ == '__main__':
     main()

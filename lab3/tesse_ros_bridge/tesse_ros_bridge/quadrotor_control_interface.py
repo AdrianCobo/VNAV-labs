@@ -1,15 +1,16 @@
-#!/usr/bin/env python
+#!/usr/bin/env python3
 
 import numpy as np
 import copy
 
-import rospy2 as rospy
-#import tf
+import rclpy
+from rclpy.node import Node
+
 import tf2_ros
+
 from std_msgs.msg import Header, String
 from sensor_msgs.msg import Image as ImageMsg
-from sensor_msgs.msg import Imu, CameraInfo
-from sensor_msgs.msg import LaserScan
+from sensor_msgs.msg import Imu, CameraInfo, LaserScan
 from nav_msgs.msg import Odometry
 from mav_msgs.msg import Actuators
 from geometry_msgs.msg import (
@@ -44,25 +45,22 @@ from tesse.env import *
 from tesse.utils import *
 
 
-class TesseQuadrotorControlInterface:
+class TesseQuadrotorControlInterface(Node):
     def __init__(self):
-        """This class provides a ROS interface for controlling TESSE quadrotor agents.
-        ROS users can simply send propeller speeds command to predefined propeller speeds
-        topic, and this interface will transmit the appropriate messages to TESSE simulator.
+        """This class provides a ROS 2 interface for controlling TESSE quadrotor agents."""
+        super().__init__('TesseQuadrotorControlInterface_node')
 
-        Quadrotor agent is controlled by setting the speed of each propeller. The speeds are radians per second.
-        """
         # Networking parameters
-        self.sim_ip = rospy.get_param("~sim_ip", "127.0.0.1")
-        self.self_ip = rospy.get_param("~self_ip", "127.0.0.1")
-        self.use_broadcast = rospy.get_param("~use_broadcast", False)
-        self.position_port = rospy.get_param("~position_port", 9000)
-        self.metadata_port = rospy.get_param("~metadata_port", 9001)
-        self.image_port = rospy.get_param("~image_port", 9002)
-        self.udp_port = rospy.get_param("~udp_port", 9004)
-        self.step_port = rospy.get_param("~step_port", 9005)
-        self.scan_port = rospy.get_param("~lidar_port", 9006)
-        self.scan_udp_port = rospy.get_param("~lidar_udp_port", 9007)
+        self.sim_ip = self.declare_parameter("sim_ip", "127.0.0.1").value
+        self.self_ip = self.declare_parameter("self_ip", "127.0.0.1").value
+        self.use_broadcast = self.declare_parameter("use_broadcast", False).value
+        self.position_port = self.declare_parameter("position_port", 9000).value
+        self.metadata_port = self.declare_parameter("metadata_port", 9001).value
+        self.image_port = self.declare_parameter("image_port", 9002).value
+        self.udp_port = self.declare_parameter("udp_port", 9004).value
+        self.step_port = self.declare_parameter("step_port", 9005).value
+        self.scan_port = self.declare_parameter("lidar_port", 9006).value
+        self.scan_udp_port = self.declare_parameter("lidar_udp_port", 9007).value
 
         # Topics
         self.props_speeds_topic = "rotor_speed_cmds"
@@ -78,24 +76,34 @@ class TesseQuadrotorControlInterface:
         )
 
         # setup control interface subscriber
-        self.props_speeds_sub = rospy.Subscriber(
-            self.props_speeds_topic, Actuators, self.props_control_cb
+        self.props_speeds_sub = self.create_subscription(
+            Actuators,
+            self.props_speeds_topic,
+            self.props_control_cb,
+            10  # QoS depth
         )
 
-    def props_control_cb(self, msg):
+    def props_control_cb(self, msg: Actuators):
         """Callback function used for propeller speed control
 
         :param msg: A mav_msgs.msg.Actuators message. The field angular_velocities is used for setting the propeller speeds.
         """
-        # read prop speeds
         speeds = msg.angular_velocities
-        self.env.send(PropSpeeds(speeds[0],speeds[1],speeds[2],speeds[3]))
-        #rospy.loginfo(str(speeds))
+        self.env.send(PropSpeeds(speeds[0], speeds[1], speeds[2], speeds[3]))
+        #self.get_logger().info(f"Propeller speeds: {speeds}")
 
-def main():
-    rospy.init_node("TesseQuadrotorControlInterface_node")
+
+def main(args=None):
+    rclpy.init(args=args)
     node = TesseQuadrotorControlInterface()
-    rospy.spin()
+    try:
+        rclpy.spin(node)
+    except KeyboardInterrupt:
+        pass
+    finally:
+        node.destroy_node()
+        rclpy.shutdown()
+
 
 if __name__ == "__main__":
     main()

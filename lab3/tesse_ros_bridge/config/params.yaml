@@ -39,7 +39,7 @@ tesse_ros_bridge:
     # <!-- NOTE: `use_sim_time` should always be true for tesse! -->
     use_sim_time: true
     frame_rate: 20.0
-    imu_rate: 200
+    imu_rate: 200.0
     scan_rate: 40.0
     enable_collision: true
     initial_scene: 1
